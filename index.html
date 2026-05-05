@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IP 定位查询 + 三级VPN检测</title>
+    <!-- Leaflet CSS (jsDelivr CDN) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: #f4f6f9;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 24px;
+            color: #1e293b;
+        }
+
+        .card {
+            max-width: 780px;
+            width: 100%;
+            background: #fff;
+            border-radius: 28px;
+            padding: 34px 30px 36px;
+            box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.07);
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 22px;
+            flex-wrap: wrap;
+        }
+        .header .icon { font-size: 26px; color: #3b82f6; }
+        .header h1 { font-size: 24px; font-weight: 700; color: #0f172a; }
+        .header .badge {
+            margin-left: auto;
+            background: #eef2ff;
+            color: #3b82f6;
+            padding: 5px 14px;
+            border-radius: 100px;
+            font-size: 12px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* 搜索 */
+        .search-box {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .search-box .input-wrap {
+            flex: 1;
+            position: relative;
+            min-width: 170px;
+        }
+        .search-box .input-wrap i {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+            font-size: 14px;
+            pointer-events: none;
+        }
+        .search-box input {
+            width: 100%;
+            padding: 13px 18px 13px 44px;
+            border-radius: 60px;
+            border: 1.5px solid #e2e8f0;
+            background: #f8fafc;
+            color: #0f172a;
+            font-size: 15px;
+            outline: none;
+            transition: 0.2s;
+        }
+        .search-box input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.08);
+            background: #fff;
+        }
+        .btn-group { display: flex; gap: 10px; flex-wrap: wrap; }
+        .btn {
+            padding: 13px 26px;
+            border-radius: 60px;
+            border: none;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+        }
+        .btn-primary {
+            background: #3b82f6;
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.22);
+        }
+        .btn-primary:hover { background: #2563eb; transform: translateY(-1px); }
+        .btn-secondary {
+            background: #f1f5f9;
+            color: #334155;
+            border: 1px solid #e2e8f0;
+        }
+        .btn-secondary:hover { background: #e2e8f0; }
+
+        /* 加载 */
+        .loading {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 14px 0 6px;
+            color: #64748b;
+            font-size: 14px;
+        }
+        .loading.active { display: flex; }
+        .spinner {
+            width: 20px; height: 20px;
+            border-radius: 50%;
+            border: 3px solid #e2e8f0;
+            border-top-color: #3b82f6;
+            animation: spin 0.7s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* 结果 */
+        .result {
+            display: none;
+            margin-top: 4px;
+            background: #f8fafc;
+            border-radius: 22px;
+            padding: 22px 22px 18px;
+            border: 1px solid #eef2f6;
+            animation: fadeUp 0.4s ease;
+        }
+        .result.active { display: block; }
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .result-ip {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .result-ip .ip-text {
+            font-size: 27px;
+            font-weight: 700;
+            color: #0f172a;
+            word-break: break-all;
+        }
+        .result-ip .ip-text .hl { color: #3b82f6; }
+        .copy-btn {
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            color: #64748b;
+            width: 40px; height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 16px;
+            transition: 0.2s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .copy-btn:hover { background: #e2e8f0; color: #3b82f6; }
+        .copy-btn.copied { background: #dcfce7; border-color: #86efac; color: #16a34a; }
+
+        /* ===== 信息网格 ===== */
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .info-item {
+            background: #fff;
+            border-radius: 14px;
+            padding: 14px 16px;
+            border: 1px solid #eef2f6;
+        }
+        .info-item .label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            color: #94a3b8;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        .info-item .value {
+            font-size: 14px;
+            font-weight: 600;
+            color: #0f172a;
+            word-break: break-word;
+        }
+        .info-item .value .flag { margin-right: 6px; font-size: 18px; vertical-align: middle; }
+        .info-item .value .tag {
+            display: inline-block;
+            background: #eef2ff;
+            padding: 2px 12px;
+            border-radius: 100px;
+            font-size: 12px;
+            color: #3b82f6;
+            font-weight: 500;
+        }
+
+        /* ===== VPN 检测（三级） ===== */
+        .vpn-section {
+            background: #fff;
+            border-radius: 14px;
+            border: 1px solid #eef2f6;
+            padding: 16px 18px;
+            margin-bottom: 16px;
+        }
+        .vpn-section .vpn-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .vpn-section .vpn-title i { color: #3b82f6; }
+        
+        .vpn-level {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            padding: 14px 16px;
+            border-radius: 12px;
+            border: 1px solid #eef2f6;
+        }
+        .vpn-level .vpn-icon-big { font-size: 28px; flex-shrink: 0; margin-top: 2px; }
+        .vpn-level .vpn-info { flex: 1; }
+        .vpn-level .vpn-status-text {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .vpn-level .vpn-desc {
+            font-size: 13px;
+            color: #64748b;
+            line-height: 1.6;
+        }
+        .vpn-level .vpn-detail {
+            font-size: 12px;
+            color: #94a3b8;
+            margin-top: 4px;
+            font-family: monospace;
+        }
+        /* 颜色主题 */
+        .vpn-level.level-safe {
+            background: #f0fdf4;
+            border-color: #bbf7d0;
+        }
+        .vpn-level.level-safe .vpn-status-text { color: #16a34a; }
+        
+        .vpn-level.level-suspicious {
+            background: #fffbeb;
+            border-color: #fde68a;
+        }
+        .vpn-level.level-suspicious .vpn-status-text { color: #d97706; }
+        
+        .vpn-level.level-danger {
+            background: #fef2f2;
+            border-color: #fecaca;
+        }
+        .vpn-level.level-danger .vpn-status-text { color: #dc2626; }
+        
+        .vpn-level.level-unknown {
+            background: #f8fafc;
+            border-color: #e2e8f0;
+        }
+        .vpn-level.level-unknown .vpn-status-text { color: #94a3b8; }
+
+        /* ===== 地图 ===== */
+        .map-section {
+            background: #fff;
+            border-radius: 14px;
+            border: 1px solid #eef2f6;
+            padding: 14px 18px;
+        }
+        .map-section .map-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .map-section .map-title i { color: #3b82f6; }
+        .map-section .map-title .map-source-badge {
+            margin-left: auto;
+            font-size: 11px;
+            background: #eef2ff;
+            color: #3b82f6;
+            padding: 2px 10px;
+            border-radius: 100px;
+            font-weight: 500;
+        }
+        #map {
+            width: 100%;
+            height: 300px;
+            border-radius: 12px;
+            z-index: 0;
+        }
+        .map-coords {
+            text-align: center;
+            font-size: 12px;
+            color: #64748b;
+            margin-top: 8px;
+        }
+
+        /* 错误 */
+        .error-msg {
+            display: none;
+            margin-top: 8px;
+            padding: 14px 20px;
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 14px;
+            color: #dc2626;
+            font-size: 14px;
+            font-weight: 500;
+            align-items: center;
+            gap: 12px;
+            animation: fadeUp 0.3s ease;
+        }
+        .error-msg.active { display: flex; }
+        .error-msg i { font-size: 18px; }
+
+        .footer {
+            margin-top: 22px;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 12px;
+        }
+        .footer a { color: #3b82f6; text-decoration: none; }
+
+        @media (max-width: 640px) {
+            .card { padding: 24px 16px 26px; border-radius: 24px; }
+            .header h1 { font-size: 20px; }
+            .result-ip .ip-text { font-size: 22px; }
+            .info-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+            #map { height: 220px; }
+            .vpn-level { flex-direction: column; align-items: center; text-align: center; }
+        }
+        @media (max-width: 420px) {
+            .info-grid { grid-template-columns: 1fr; }
+            .btn-group .btn { flex: 1; justify-content: center; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <!-- 头部 -->
+        <div class="header">
+            <i class="fas fa-map-pin icon"></i>
+            <h1>IP 定位查询</h1>
+            <span class="badge"><i class="fas fa-shield-alt"></i> 三级VPN检测</span>
+        </div>
+
+        <!-- 搜索 -->
+        <div class="search-box">
+            <div class="input-wrap">
+                <i class="fas fa-search"></i>
+                <input type="text" id="ipInput" placeholder="输入 IP 地址（留空查本机）" spellcheck="false" />
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" id="queryBtn"><i class="fas fa-magnifying-glass"></i> 查询</button>
+                <button class="btn btn-secondary" id="myipBtn"><i class="fas fa-location-dot"></i> 本机 IP</button>
+            </div>
+        </div>
+
+        <!-- 加载 -->
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <span>正在查询…</span>
+        </div>
+
+        <!-- 错误 -->
+        <div class="error-msg" id="errorMsg">
+            <i class="fas fa-circle-exclamation"></i>
+            <span id="errorText">请求失败，请稍后重试</span>
+        </div>
+
+        <!-- 结果 -->
+        <div class="result" id="result">
+            <!-- IP + 复制 -->
+            <div class="result-ip">
+                <span class="ip-text" id="displayIp">—</span>
+                <button class="copy-btn" id="copyBtn" title="复制 IP"><i class="fas fa-copy"></i></button>
+            </div>
+
+            <!-- 地理信息 -->
+            <div class="info-grid" id="infoGrid"></div>
+
+            <!-- ===== VPN 检测（三级） ===== -->
+            <div class="vpn-section" id="vpnSection">
+                <div class="vpn-title"><i class="fas fa-shield-alt"></i> VPN 检测 <span style="font-size:12px;color:#94a3b8;font-weight:400;">基于 WebRTC 本地IP对比</span></div>
+                <div id="vpnResultContent">
+                    <div class="vpn-level level-unknown">
+                        <span class="vpn-icon-big">🔄</span>
+                        <div class="vpn-info">
+                            <div class="vpn-status-text">正在检测…</div>
+                            <div class="vpn-desc">获取本地IP中，请稍候</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== 地图 ===== -->
+            <div class="map-section">
+                <div class="map-title">
+                    <i class="fas fa-map-marked-alt"></i> 地图定位
+                    <span class="map-source-badge" id="mapSourceBadge">🌏 加载中</span>
+                </div>
+                <div id="map"></div>
+                <div class="map-coords" id="mapCoords">等待查询…</div>
+            </div>
+        </div>
+
+        <!-- 底部 -->
+        <div class="footer">
+            数据来源 <a href="https://ip.sb" target="_blank">ip.sb</a> ·
+            地图 <span id="footerMapSource">自动切换</span> ·
+            三级VPN检测
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        (function() {
+            'use strict';
+
+            // ---------- DOM ----------
+            const ipInput = document.getElementById('ipInput');
+            const queryBtn = document.getElementById('queryBtn');
+            const myipBtn = document.getElementById('myipBtn');
+            const loading = document.getElementById('loading');
+            const resultDiv = document.getElementById('result');
+            const errorMsg = document.getElementById('errorMsg');
+            const errorText = document.getElementById('errorText');
+            const displayIp = document.getElementById('displayIp');
+            const infoGrid = document.getElementById('infoGrid');
+            const copyBtn = document.getElementById('copyBtn');
+            const vpnResultContent = document.getElementById('vpnResultContent');
+            const mapCoords = document.getElementById('mapCoords');
+            const mapSourceBadge = document.getElementById('mapSourceBadge');
+            const footerMapSource = document.getElementById('footerMapSource');
+
+            let lastQueriedIp = '';
+            let lastPublicIp = '';
+            let mapInstance = null;
+            let mapMarker = null;
+
+            // ---------- 工具 ----------
+            function showLoading(show) {
+                loading.classList.toggle('active', show);
+            }
+
+            function showError(msg) {
+                if (msg) {
+                    errorText.textContent = msg;
+                    errorMsg.classList.add('active');
+                } else {
+                    errorMsg.classList.remove('active');
+                }
+                resultDiv.classList.remove('active');
+            }
+
+            // ---------- 判断是否为局域网IP ----------
+            function isPrivateIP(ip) {
+                if (!ip) return false;
+                const parts = ip.split('.').map(Number);
+                if (parts.length !== 4) return false;
+                // 10.x.x.x
+                if (parts[0] === 10) return true;
+                // 192.168.x.x
+                if (parts[0] === 192 && parts[1] === 168) return true;
+                // 172.16-31.x.x
+                if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+                // 127.x.x.x (回环地址)
+                if (parts[0] === 127) return true;
+                // 169.254.x.x (APIPA)
+                if (parts[0] === 169 && parts[1] === 254) return true;
+                // 0.0.0.0
+                if (parts[0] === 0 && parts[1] === 0 && parts[2] === 0 && parts[3] === 0) return true;
+                return false;
+            }
+
+            // ---------- 地图瓦片配置 ----------
+            const TILE_CONFIG = {
+                amap: {
+                    url: 'https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+                    attribution: '&copy; <a href="https://www.amap.com/">高德地图</a>',
+                    maxZoom: 18,
+                    label: '高德地图',
+                    emoji: '🇨🇳'
+                },
+                osm: {
+                    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+                    maxZoom: 19,
+                    label: 'OpenStreetMap',
+                    emoji: '🌏'
+                }
+            };
+
+            // ---------- 根据国家码选择地图源 ----------
+            function getTileConfig(countryCode) {
+                if (countryCode === 'CN') {
+                    return TILE_CONFIG.amap;
+                }
+                return TILE_CONFIG.osm;
+            }
+
+            // ---------- 初始化地图 ----------
+            function initMap(lat, lng, locationName, countryCode) {
+                const mapContainer = document.getElementById('map');
+                if (mapInstance) {
+                    mapInstance.remove();
+                    mapInstance = null;
+                    mapMarker = null;
+                }
+
+                const tileConfig = getTileConfig(countryCode);
+                
+                // 更新UI中的地图源标识
+                mapSourceBadge.textContent = `${tileConfig.emoji} ${tileConfig.label}`;
+                footerMapSource.textContent = tileConfig.label;
+
+                mapInstance = L.map('map', {
+                    center: [lat, lng],
+                    zoom: 12,
+                    zoomControl: true,
+                    attributionControl: true
+                });
+
+                L.tileLayer(tileConfig.url, {
+                    maxZoom: tileConfig.maxZoom,
+                    attribution: tileConfig.attribution
+                }).addTo(mapInstance);
+
+                mapMarker = L.marker([lat, lng]).addTo(mapInstance);
+
+                const popupContent = `
+                    <div style="font-size:13px; font-weight:600;">
+                        ${locationName || 'IP 位置'}<br/>
+                        <span style="color:#64748b;font-weight:400;">${lat.toFixed(4)}, ${lng.toFixed(4)}</span>
+                    </div>
+                `;
+                mapMarker.bindPopup(popupContent).openPopup();
+
+                mapCoords.textContent = `📍 ${lat.toFixed(4)}, ${lng.toFixed(4)} — ${locationName || '未知位置'}`;
+
+                setTimeout(() => {
+                    if (mapInstance) mapInstance.invalidateSize();
+                }, 600);
+            }
+
+            // ---------- WebRTC 获取本地 IP ----------
+            function getLocalIP() {
+                return new Promise((resolve) => {
+                    const timeout = setTimeout(() => { resolve(null); }, 5000);
+                    try {
+                        const pc = new RTCPeerConnection({ iceServers: [] });
+                        pc.createDataChannel('');
+                        pc.createOffer().then(offer => pc.setLocalDescription(offer)).catch(() => {});
+                        pc.onicecandidate = (ice) => {
+                            if (ice.candidate && ice.candidate.candidate) {
+                                const ipRegex = /([0-9]{1,3}\.){3}[0-9]{1,3}/;
+                                const match = ice.candidate.candidate.match(ipRegex);
+                                if (match) {
+                                    clearTimeout(timeout);
+                                    pc.close();
+                                    resolve(match[0]);
+                                }
+                            }
+                        };
+                        setTimeout(() => { pc.close(); resolve(null); }, 4000);
+                    } catch (e) {
+                        clearTimeout(timeout);
+                        resolve(null);
+                    }
+                });
+            }
+
+            // ---------- 三级VPN检测 ----------
+            async function detectVpnByWebRTC(publicIp) {
+                // 显示加载
+                vpnResultContent.innerHTML = `
+                    <div class="vpn-level level-unknown">
+                        <span class="vpn-icon-big">🔄</span>
+                        <div class="vpn-info">
+                            <div class="vpn-status-text">正在检测…</div>
+                            <div class="vpn-desc">获取本地IP中，请稍候</div>
+                        </div>
+                    </div>
+                `;
+
+                const localIp = await getLocalIP();
+
+                if (!localIp) {
+                    vpnResultContent.innerHTML = `
+                        <div class="vpn-level level-unknown">
+                            <span class="vpn-icon-big">⚠️</span>
+                            <div class="vpn-info">
+                                <div class="vpn-status-text">无法检测</div>
+                                <div class="vpn-desc">浏览器禁用了 WebRTC 或未运行在 HTTPS 环境，无法获取本地IP</div>
+                            </div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                // 判断本地IP是否为局域网IP
+                const isPrivate = isPrivateIP(localIp);
+
+                // 三级判断逻辑
+                if (localIp === publicIp) {
+                    // 🟢 一级：正常 - IP一致
+                    vpnResultContent.innerHTML = `
+                        <div class="vpn-level level-safe">
+                            <span class="vpn-icon-big">🟢</span>
+                            <div class="vpn-info">
+                                <div class="vpn-status-text">正常 — 未检测到VPN</div>
+                                <div class="vpn-desc">您的本地IP与公网IP一致，网络环境直连，未使用VPN或代理。</div>
+                                <div class="vpn-detail">本地IP：${localIp} ｜ 公网IP：${publicIp}</div>
+                            </div>
+                        </div>
+                    `;
+                } else if (isPrivate) {
+                    // 🟡 二级：怀疑 - 本地IP是局域网IP
+                    vpnResultContent.innerHTML = `
+                        <div class="vpn-level level-suspicious">
+                            <span class="vpn-icon-big">🟡</span>
+                            <div class="vpn-info">
+                                <div class="vpn-status-text">怀疑 — 通过路由器上网</div>
+                                <div class="vpn-desc">
+                                    您的本地IP为局域网地址（${localIp}），这是通过路由器/NAT上网的正常现象。
+                                    绝大多数家庭和办公网络都属于此情况。<strong>无法确定是否使用了VPN</strong>。
+                                </div>
+                                <div class="vpn-detail">本地IP：${localIp}（私有地址） ｜ 公网IP：${publicIp}</div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    // 🔴 三级：确定VPN - 本地IP是公网IP但与查询结果不同
+                    vpnResultContent.innerHTML = `
+                        <div class="vpn-level level-danger">
+                            <span class="vpn-icon-big">🔴</span>
+                            <div class="vpn-info">
+                                <div class="vpn-status-text">确定 — 正在使用VPN / 代理</div>
+                                <div class="vpn-desc">
+                                    您的本地IP（${localIp}）为公网地址，但与出口公网IP（${publicIp}）不一致，
+                                    流量明显经过了VPN隧道或代理服务器。
+                                </div>
+                                <div class="vpn-detail">本地IP：${localIp}（公网地址） ｜ 公网IP：${publicIp}</div>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            // ---------- 展示结果 ----------
+            function showResult(ip, data) {
+                errorMsg.classList.remove('active');
+                resultDiv.classList.add('active');
+                displayIp.innerHTML = `<span class="hl">${ip}</span>`;
+                lastQueriedIp = ip;
+                lastPublicIp = ip;
+
+                // ---- 地理信息网格 ----
+                const rows = [];
+                let countryStr = data.country || '—';
+                if (data.country_code) {
+                    const code = data.country_code.toUpperCase();
+                    const flag = [...code].map(ch => String.fromCodePoint(0x1F1E6 + ch.charCodeAt(0) - 65)).join('');
+                    countryStr = `${flag} ${countryStr}`;
+                }
+                rows.push({ label: '🌍 国家/地区', value: countryStr });
+                let cityStr = [data.city, data.region].filter(Boolean).join('，') || '—';
+                rows.push({ label: '📍 城市', value: cityStr });
+                const org = data.organization || data.isp || '—';
+                rows.push({ label: '🏢 运营商', value: `<span class="tag">${org}</span>` });
+                const lat = data.latitude !== undefined && data.latitude !== null ? Number(data.latitude).toFixed(4) : '—';
+                const lon = data.longitude !== undefined && data.longitude !== null ? Number(data.longitude).toFixed(4) : '—';
+                rows.push({ label: '📌 经纬度', value: `${lat}, ${lon}` });
+                rows.push({ label: '🕐 时区', value: data.timezone || '—' });
+                rows.push({ label: '🔗 ASN', value: data.asn || '—' });
+                infoGrid.innerHTML = rows.map(r => `
+                    <div class="info-item">
+                        <div class="label">${r.label}</div>
+                        <div class="value">${r.value}</div>
+                    </div>
+                `).join('');
+
+                // ---- 地图定位（根据国家自动切换地图源） ----
+                if (data.latitude !== undefined && data.latitude !== null &&
+                    data.longitude !== undefined && data.longitude !== null) {
+                    const locationName = [data.city, data.region, data.country].filter(Boolean).join(', ') || ip;
+                    const countryCode = data.country_code || '';
+                    initMap(Number(data.latitude), Number(data.longitude), locationName, countryCode);
+                } else {
+                    const mapContainer = document.getElementById('map');
+                    if (mapInstance) { mapInstance.remove(); mapInstance = null; mapMarker = null; }
+                    mapContainer.innerHTML = `
+                        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:#94a3b8;font-size:14px;background:#f8fafc;border-radius:12px;">
+                            该 IP 暂无地理位置信息
+                        </div>
+                    `;
+                    mapCoords.textContent = '— 无坐标信息 —';
+                    mapSourceBadge.textContent = '—';
+                    footerMapSource.textContent = '未知';
+                }
+
+                // ---- 三级VPN检测（仅本机查询） ----
+                if (!ipInput.value.trim()) {
+                    detectVpnByWebRTC(ip);
+                } else {
+                    vpnResultContent.innerHTML = `
+                        <div class="vpn-level level-unknown">
+                            <span class="vpn-icon-big">ℹ️</span>
+                            <div class="vpn-info">
+                                <div class="vpn-status-text">指定IP查询</div>
+                                <div class="vpn-desc">当前查询的是指定IP（${ip}），VPN检测仅对本机查询有效。</div>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            // ---------- 核心查询 ----------
+            async function queryIP(ip) {
+                showError(null);
+                showLoading(true);
+                resultDiv.classList.remove('active');
+
+                try {
+                    const url = ip ?
+                        `https://api.ip.sb/geoip/${encodeURIComponent(ip)}` :
+                        'https://api.ip.sb/geoip';
+
+                    const resp = await fetch(url, {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/json' }
+                    });
+
+                    if (!resp.ok) {
+                        if (resp.status === 400) throw new Error('IP 地址格式无效');
+                        throw new Error(`HTTP ${resp.status}，请求失败`);
+                    }
+
+                    const data = await resp.json();
+                    if (!data || !data.ip) throw new Error('返回数据异常');
+
+                    showResult(data.ip, data);
+                } catch (err) {
+                    showError(err.message || '查询失败');
+                } finally {
+                    showLoading(false);
+                }
+            }
+
+            async function queryMyIP() {
+                await queryIP('');
+            }
+
+            // ---------- 事件绑定 ----------
+            queryBtn.addEventListener('click', () => {
+                const val = ipInput.value.trim();
+                if (val) queryIP(val);
+                else queryMyIP();
+            });
+
+            myipBtn.addEventListener('click', queryMyIP);
+
+            ipInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); queryBtn.click(); }
+            });
+
+            copyBtn.addEventListener('click', async () => {
+                if (!lastQueriedIp) return;
+                try {
+                    await navigator.clipboard.writeText(lastQueriedIp);
+                    copyBtn.classList.add('copied');
+                    copyBtn.innerHTML = '<i class="fas fa-check"></i>';
+                    setTimeout(() => {
+                        copyBtn.classList.remove('copied');
+                        copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
+                    }, 1800);
+                } catch {
+                    const ta = document.createElement('textarea');
+                    ta.value = lastQueriedIp;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    ta.remove();
+                    copyBtn.classList.add('copied');
+                    copyBtn.innerHTML = '<i class="fas fa-check"></i>';
+                    setTimeout(() => {
+                        copyBtn.classList.remove('copied');
+                        copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
+                    }, 1800);
+                }
+            });
+
+            // 页面加载后自动查询本机
+            setTimeout(() => { queryMyIP(); }, 400);
+
+        })();
+    </script>
+
+</body>
+</html>
