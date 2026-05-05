@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>IP 定位查询 + 三级VPN检测</title>
+    <title>IP 定位查询 + 三级VPN检测 | 网络工具箱</title>
     <!-- Leaflet CSS (jsDelivr CDN) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
     <!-- Font Awesome -->
@@ -29,6 +29,48 @@
             border-radius: 28px;
             padding: 34px 30px 36px;
             box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.07);
+            position: relative;
+        }
+
+        /* 新增跳转工具栏 */
+        .tools-bar {
+            position: absolute;
+            top: 28px;
+            right: 30px;
+            z-index: 10;
+        }
+
+        .jump-btn {
+            background: rgba(59, 130, 246, 0.08);
+            border: 1px solid #dfe6ef;
+            border-radius: 40px;
+            padding: 6px 16px 6px 14px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #3b82f6;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            backdrop-filter: blur(2px);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+        }
+
+        .jump-btn i {
+            font-size: 13px;
+            transition: transform 0.2s ease;
+        }
+
+        .jump-btn:hover {
+            background: #3b82f6;
+            border-color: #3b82f6;
+            color: white;
+            box-shadow: 0 4px 10px rgba(59,130,246,0.2);
+        }
+
+        .jump-btn:hover i {
+            transform: translateX(2px);
         }
 
         .header {
@@ -37,6 +79,7 @@
             gap: 10px;
             margin-bottom: 22px;
             flex-wrap: wrap;
+            padding-right: 105px; /* 为右侧按钮留出空间 */
         }
         .header .icon { font-size: 26px; color: #3b82f6; }
         .header h1 { font-size: 24px; font-weight: 700; color: #0f172a; }
@@ -357,9 +400,36 @@
         }
         .footer a { color: #3b82f6; text-decoration: none; }
 
+        /* 小提示跳转动画 */
+        .toast-hint {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%) scale(0.9);
+            background: #1e293b;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 40px;
+            font-size: 13px;
+            font-weight: 500;
+            opacity: 0;
+            transition: opacity 0.2s, transform 0.2s;
+            pointer-events: none;
+            z-index: 999;
+            white-space: nowrap;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+        }
+        .toast-hint.show {
+            opacity: 1;
+            transform: translateX(-50%) scale(1);
+        }
+
         @media (max-width: 640px) {
             .card { padding: 24px 16px 26px; border-radius: 24px; }
             .header h1 { font-size: 20px; }
+            .header { padding-right: 60px; }
+            .tools-bar { top: 20px; right: 16px; }
+            .jump-btn { padding: 5px 12px; font-size: 12px; }
             .result-ip .ip-text { font-size: 22px; }
             .info-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
             #map { height: 220px; }
@@ -374,6 +444,14 @@
 <body>
 
     <div class="card">
+        <!-- 新增跳转工具箱按钮 (右上角) -->
+        <div class="tools-bar">
+            <button class="jump-btn" id="jumpToToolsBtn" title="前往更多网络工具">
+                <i class="fas fa-wrench"></i> 工具箱
+                <i class="fas fa-arrow-right"></i>
+            </button>
+        </div>
+
         <!-- 头部 -->
         <div class="header">
             <i class="fas fa-map-pin icon"></i>
@@ -385,7 +463,7 @@
         <div class="search-box">
             <div class="input-wrap">
                 <i class="fas fa-search"></i>
-                <input type="text" id="ipInput" placeholder="输入 IP 地址（留空查本机）" spellcheck="false" />
+                <input type="text" id="ipInput" placeholder="输入 IP 地址（留空查本机）" spellcheck="false" autocomplete="off" />
             </div>
             <div class="btn-group">
                 <button class="btn btn-primary" id="queryBtn"><i class="fas fa-magnifying-glass"></i> 查询</button>
@@ -449,6 +527,9 @@
         </div>
     </div>
 
+    <!-- 跳转提示轻提示 -->
+    <div id="jumpToast" class="toast-hint">✨ 即将前往工具箱页面 tools.html</div>
+
     <!-- Leaflet JS -->
     <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -472,12 +553,16 @@
             const mapSourceBadge = document.getElementById('mapSourceBadge');
             const footerMapSource = document.getElementById('footerMapSource');
 
+            // ----- 新增：跳转按钮与相关DOM -----
+            const jumpToToolsBtn = document.getElementById('jumpToToolsBtn');
+            const jumpToast = document.getElementById('jumpToast');
+
             let lastQueriedIp = '';
             let lastPublicIp = '';
             let mapInstance = null;
             let mapMarker = null;
 
-            // ---------- 工具 ----------
+            // ---------- 工具函数 ----------
             function showLoading(show) {
                 loading.classList.toggle('active', show);
             }
@@ -492,27 +577,30 @@
                 resultDiv.classList.remove('active');
             }
 
-            // ---------- 判断是否为局域网IP ----------
+            function showToastMessage(msg, duration = 1800) {
+                if (!jumpToast) return;
+                jumpToast.textContent = msg || '✨ 即将跳转';
+                jumpToast.classList.add('show');
+                setTimeout(() => {
+                    jumpToast.classList.remove('show');
+                }, duration);
+            }
+
+            // 判断是否为局域网/私有IP (复用)
             function isPrivateIP(ip) {
                 if (!ip) return false;
                 const parts = ip.split('.').map(Number);
                 if (parts.length !== 4) return false;
-                // 10.x.x.x
                 if (parts[0] === 10) return true;
-                // 192.168.x.x
                 if (parts[0] === 192 && parts[1] === 168) return true;
-                // 172.16-31.x.x
                 if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
-                // 127.x.x.x (回环地址)
                 if (parts[0] === 127) return true;
-                // 169.254.x.x (APIPA)
                 if (parts[0] === 169 && parts[1] === 254) return true;
-                // 0.0.0.0
                 if (parts[0] === 0 && parts[1] === 0 && parts[2] === 0 && parts[3] === 0) return true;
                 return false;
             }
 
-            // ---------- 地图瓦片配置 ----------
+            // 地图瓦片配置
             const TILE_CONFIG = {
                 amap: {
                     url: 'https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
@@ -530,15 +618,10 @@
                 }
             };
 
-            // ---------- 根据国家码选择地图源 ----------
             function getTileConfig(countryCode) {
-                if (countryCode === 'CN') {
-                    return TILE_CONFIG.amap;
-                }
-                return TILE_CONFIG.osm;
+                return countryCode === 'CN' ? TILE_CONFIG.amap : TILE_CONFIG.osm;
             }
 
-            // ---------- 初始化地图 ----------
             function initMap(lat, lng, locationName, countryCode) {
                 const mapContainer = document.getElementById('map');
                 if (mapInstance) {
@@ -548,8 +631,6 @@
                 }
 
                 const tileConfig = getTileConfig(countryCode);
-                
-                // 更新UI中的地图源标识
                 mapSourceBadge.textContent = `${tileConfig.emoji} ${tileConfig.label}`;
                 footerMapSource.textContent = tileConfig.label;
 
@@ -566,7 +647,6 @@
                 }).addTo(mapInstance);
 
                 mapMarker = L.marker([lat, lng]).addTo(mapInstance);
-
                 const popupContent = `
                     <div style="font-size:13px; font-weight:600;">
                         ${locationName || 'IP 位置'}<br/>
@@ -574,7 +654,6 @@
                     </div>
                 `;
                 mapMarker.bindPopup(popupContent).openPopup();
-
                 mapCoords.textContent = `📍 ${lat.toFixed(4)}, ${lng.toFixed(4)} — ${locationName || '未知位置'}`;
 
                 setTimeout(() => {
@@ -582,7 +661,7 @@
                 }, 600);
             }
 
-            // ---------- WebRTC 获取本地 IP ----------
+            // WebRTC 获取本地 IP
             function getLocalIP() {
                 return new Promise((resolve) => {
                     const timeout = setTimeout(() => { resolve(null); }, 5000);
@@ -609,9 +688,8 @@
                 });
             }
 
-            // ---------- 三级VPN检测 ----------
+            // 三级VPN检测
             async function detectVpnByWebRTC(publicIp) {
-                // 显示加载
                 vpnResultContent.innerHTML = `
                     <div class="vpn-level level-unknown">
                         <span class="vpn-icon-big">🔄</span>
@@ -621,9 +699,7 @@
                         </div>
                     </div>
                 `;
-
                 const localIp = await getLocalIP();
-
                 if (!localIp) {
                     vpnResultContent.innerHTML = `
                         <div class="vpn-level level-unknown">
@@ -636,13 +712,8 @@
                     `;
                     return;
                 }
-
-                // 判断本地IP是否为局域网IP
                 const isPrivate = isPrivateIP(localIp);
-
-                // 三级判断逻辑
                 if (localIp === publicIp) {
-                    // 🟢 一级：正常 - IP一致
                     vpnResultContent.innerHTML = `
                         <div class="vpn-level level-safe">
                             <span class="vpn-icon-big">🟢</span>
@@ -654,7 +725,6 @@
                         </div>
                     `;
                 } else if (isPrivate) {
-                    // 🟡 二级：怀疑 - 本地IP是局域网IP
                     vpnResultContent.innerHTML = `
                         <div class="vpn-level level-suspicious">
                             <span class="vpn-icon-big">🟡</span>
@@ -669,7 +739,6 @@
                         </div>
                     `;
                 } else {
-                    // 🔴 三级：确定VPN - 本地IP是公网IP但与查询结果不同
                     vpnResultContent.innerHTML = `
                         <div class="vpn-level level-danger">
                             <span class="vpn-icon-big">🔴</span>
@@ -686,7 +755,7 @@
                 }
             }
 
-            // ---------- 展示结果 ----------
+            // 展示查询结果
             function showResult(ip, data) {
                 errorMsg.classList.remove('active');
                 resultDiv.classList.add('active');
@@ -694,7 +763,6 @@
                 lastQueriedIp = ip;
                 lastPublicIp = ip;
 
-                // ---- 地理信息网格 ----
                 const rows = [];
                 let countryStr = data.country || '—';
                 if (data.country_code) {
@@ -719,9 +787,7 @@
                     </div>
                 `).join('');
 
-                // ---- 地图定位（根据国家自动切换地图源） ----
-                if (data.latitude !== undefined && data.latitude !== null &&
-                    data.longitude !== undefined && data.longitude !== null) {
+                if (data.latitude !== undefined && data.latitude !== null && data.longitude !== undefined && data.longitude !== null) {
                     const locationName = [data.city, data.region, data.country].filter(Boolean).join(', ') || ip;
                     const countryCode = data.country_code || '';
                     initMap(Number(data.latitude), Number(data.longitude), locationName, countryCode);
@@ -738,7 +804,7 @@
                     footerMapSource.textContent = '未知';
                 }
 
-                // ---- 三级VPN检测（仅本机查询） ----
+                // 三级VPN检测仅本机查询
                 if (!ipInput.value.trim()) {
                     detectVpnByWebRTC(ip);
                 } else {
@@ -754,30 +820,23 @@
                 }
             }
 
-            // ---------- 核心查询 ----------
+            // 核心查询
             async function queryIP(ip) {
                 showError(null);
                 showLoading(true);
                 resultDiv.classList.remove('active');
-
                 try {
-                    const url = ip ?
-                        `https://api.ip.sb/geoip/${encodeURIComponent(ip)}` :
-                        'https://api.ip.sb/geoip';
-
+                    const url = ip ? `https://api.ip.sb/geoip/${encodeURIComponent(ip)}` : 'https://api.ip.sb/geoip';
                     const resp = await fetch(url, {
                         method: 'GET',
                         headers: { 'Accept': 'application/json' }
                     });
-
                     if (!resp.ok) {
                         if (resp.status === 400) throw new Error('IP 地址格式无效');
                         throw new Error(`HTTP ${resp.status}，请求失败`);
                     }
-
                     const data = await resp.json();
                     if (!data || !data.ip) throw new Error('返回数据异常');
-
                     showResult(data.ip, data);
                 } catch (err) {
                     showError(err.message || '查询失败');
@@ -790,6 +849,17 @@
                 await queryIP('');
             }
 
+            // ---------- 新增：安全检查并跳转到 tools.html ----------
+            function safeNavigateToTools() {
+                // 展示平滑提示
+                showToastMessage('🚀 前往工具箱 tools.html', 1500);
+                // 延迟跳转，让用户感知轻提示
+                setTimeout(() => {
+                    // 保留原窗口跳转，可适配相对路径
+                    window.location.href = 'tools.html';
+                }, 280);
+            }
+
             // ---------- 事件绑定 ----------
             queryBtn.addEventListener('click', () => {
                 const val = ipInput.value.trim();
@@ -798,7 +868,6 @@
             });
 
             myipBtn.addEventListener('click', queryMyIP);
-
             ipInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') { e.preventDefault(); queryBtn.click(); }
             });
@@ -812,28 +881,4 @@
                     setTimeout(() => {
                         copyBtn.classList.remove('copied');
                         copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
-                    }, 1800);
-                } catch {
-                    const ta = document.createElement('textarea');
-                    ta.value = lastQueriedIp;
-                    document.body.appendChild(ta);
-                    ta.select();
-                    document.execCommand('copy');
-                    ta.remove();
-                    copyBtn.classList.add('copied');
-                    copyBtn.innerHTML = '<i class="fas fa-check"></i>';
-                    setTimeout(() => {
-                        copyBtn.classList.remove('copied');
-                        copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
-                    }, 1800);
-                }
-            });
-
-            // 页面加载后自动查询本机
-            setTimeout(() => { queryMyIP(); }, 400);
-
-        })();
-    </script>
-
-</body>
-</html>
+                    }, 
