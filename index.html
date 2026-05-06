@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>🌟 无限攀登 · 纯净版</title>
+    <title>🌟 无限攀登 · 小黑子版</title>
     <style>
         :root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
         * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; }
@@ -131,10 +131,9 @@
             let deathAudioEl = null;
             let deathLoadStatus = '加载中...';
 
-            // 新增：音频加载完成标记
             let musicLoaded = false;
             let deathLoaded = false;
-            let allAudioReady = false;   // 所有音频加载结束（无论成败）后变为 true
+            let allAudioReady = false;
 
             function checkAllAudioReady() {
                 if (musicLoaded && deathLoaded) {
@@ -146,7 +145,6 @@
                 if (!audioCtx) {
                     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 }
-
                 fetch('1.mp3', { cache: 'no-cache' })
                     .then(response => {
                         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -358,6 +356,18 @@
                 }
             }
 
+            // ==================== 玩家图片 ====================
+            let playerImage = new Image();
+            playerImage.src = '1.png';  // 替换小球的 PNG
+            let playerImageLoaded = false;
+            playerImage.onload = () => {
+                playerImageLoaded = true;
+                console.log('玩家图片 1.png 加载完成');
+            };
+            playerImage.onerror = () => {
+                console.warn('玩家图片 1.png 加载失败，将保留原有绘制');
+            };
+
             // ==================== 游戏对象 ====================
             const PLATFORM_TYPE = { NORMAL: 0, MOVING: 1, BOUNCE: 2, CRUMBLE: 3 };
             let gameState = 'PLAYING',
@@ -449,17 +459,27 @@
                     if (this.y - camY > H + 100 && gameState === 'PLAYING') gameOver();
                 }
                 draw() {
-                    ctx.fillStyle = '#ff9800';
-                    ctx.beginPath();
-                    ctx.arc(this.x, this.y - camY, this.radius, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.fillStyle = '#fff';
-                    ctx.beginPath();
-                    ctx.arc(this.x - 5 * scale, this.y - camY - 2 * scale, 3 * scale, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.beginPath();
-                    ctx.arc(this.x + 5 * scale, this.y - camY - 2 * scale, 3 * scale, 0, Math.PI * 2);
-                    ctx.fill();
+                    // 如果图片加载成功，则绘制图片；否则回退为原始橙色小球
+                    if (playerImageLoaded && playerImage.complete) {
+                        const size = this.radius * 2;
+                        ctx.drawImage(playerImage,
+                            this.x - this.radius,
+                            this.y - camY - this.radius,
+                            size, size);
+                    } else {
+                        // 原始绘制（保底）
+                        ctx.fillStyle = '#ff9800';
+                        ctx.beginPath();
+                        ctx.arc(this.x, this.y - camY, this.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#fff';
+                        ctx.beginPath();
+                        ctx.arc(this.x - 5 * scale, this.y - camY - 2 * scale, 3 * scale, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(this.x + 5 * scale, this.y - camY - 2 * scale, 3 * scale, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
                 }
             }
 
@@ -540,7 +560,6 @@
             function handleSceneClick(pos) {
                 if (scene === 'start') {
                     const startBtn = startButton();
-                    // 仅当音频全部加载完成时，才能进入关卡选择
                     if (allAudioReady &&
                         pos.x >= startBtn.x && pos.x <= startBtn.x + startBtn.w &&
                         pos.y >= startBtn.y && pos.y <= startBtn.y + startBtn.h) {
@@ -693,7 +712,6 @@
                 ctx.fillText(`🎵 连击音乐: ${musicLoadStatus}`, W / 2, H * 0.52);
                 ctx.fillText(`💀 掉落音效: ${deathLoadStatus}`, W / 2, H * 0.55);
 
-                // 根据加载状态绘制开始按钮
                 const startBtn = startButton();
                 if (allAudioReady) {
                     drawRoundedButton(startBtn.x, startBtn.y, startBtn.w, startBtn.h, '开始游戏', '#ff9800');
