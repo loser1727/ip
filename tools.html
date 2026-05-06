@@ -56,11 +56,9 @@
                 const maxW = window.innerWidth,
                     maxH = window.innerHeight;
                 const ratio = 400 / 700;
-                if (maxW / maxH < ratio) { W = maxW;
-                    H = maxW / ratio; } else { H = maxH;
-                    W = maxH * ratio; }
-                if (W <= 0 || H <= 0) { W = 400;
-                    H = 700; }
+                if (maxW / maxH < ratio) { W = maxW; H = maxW / ratio; }
+                else { H = maxH; W = maxH * ratio; }
+                if (W <= 0 || H <= 0) { W = 400; H = 700; }
                 scale = W / 400;
                 canvas.width = Math.floor(W * dpr);
                 canvas.height = Math.floor(H * dpr);
@@ -121,14 +119,94 @@
                 }
             }
 
-            // ==================== 音频 ====================
+            // ==================== 音频（Web Audio API 实现零延迟音乐） ====================
             let audioCtx = null;
+            let musicBuffer = null;           // 解码后的音乐 AudioBuffer
+            let currentMusicSource = null;   // 当前正在播放的 BufferSourceNode
+            let musicFileInput = null;       // 隐藏文件选择器
 
             function initAudio() {
-                if (!audioCtx) audioCtx = new(window.AudioContext || window.webkitAudioContext)();
-                if (audioCtx.state === 'suspended') audioCtx.resume();
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    if (audioCtx.state === 'suspended') audioCtx.resume();
+                }
+
+                // 如果没有音乐缓冲且未加载过，尝试加载默认 1.mp3
+                if (!musicBuffer && !musicFileInput) {
+                    loadDefaultMusic();
+                }
             }
 
+            // 加载默认音乐文件并解码
+            function loadDefaultMusic() {
+                fetch('1.mp3')
+                    .then(response => {
+                        if (!response.ok) throw new Error('默认音乐不存在');
+                        return response.arrayBuffer();
+                    })
+                    .then(arrayBuffer => {
+                        if (!audioCtx) {
+                            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                            if (audioCtx.state === 'suspended') audioCtx.resume();
+                        }
+                        return audioCtx.decodeAudioData(arrayBuffer);
+                    })
+                    .then(buffer => {
+                        musicBuffer = buffer;
+                        console.log('默认音乐已加载');
+                    })
+                    .catch(err => {
+                        console.warn('无法加载默认音乐 1.mp3：', err);
+                        // 音乐缓冲保持 null，连击时不会播放音乐
+                    });
+            }
+
+            // 将文件解码为 AudioBuffer（用于导入音乐）
+            function decodeMusicFile(arrayBuffer) {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    if (audioCtx.state === 'suspended') audioCtx.resume();
+                }
+                // 兼容旧版回调形式的 decodeAudioData
+                return new Promise((resolve, reject) => {
+                    audioCtx.decodeAudioData(arrayBuffer,
+                        buffer => resolve(buffer),
+                        err => reject(err)
+                    );
+                });
+            }
+
+            // 允许用户从本地导入音乐文件
+            function importMusic() {
+                if (!musicFileInput) {
+                    musicFileInput = document.createElement('input');
+                    musicFileInput.type = 'file';
+                    musicFileInput.accept = 'audio/*';
+                    musicFileInput.style.display = 'none';
+                    document.body.appendChild(musicFileInput);
+
+                    musicFileInput.addEventListener('change', async (e) => {
+                        const file = e.target.files[0];
+                        if (!file) return;
+
+                        try {
+                            // 停止当前音乐
+                            stopMusic();
+                            // 读取文件
+                            const arrayBuffer = await file.arrayBuffer();
+                            const buffer = await decodeMusicFile(arrayBuffer);
+                            musicBuffer = buffer;
+                            console.log('导入音乐成功');
+                        } catch (err) {
+                            console.error('导入音乐失败：', err);
+                        }
+                    });
+                }
+                // 触发文件选择
+                musicFileInput.click();
+            }
+
+            // 音效函数
             function playSound(f, d, t = 'sine', v = 0.1, g = 0) {
                 if (!audioCtx) return;
                 const o = audioCtx.createOscillator(),
@@ -145,13 +223,47 @@
             }
             const sfx = {
                 jump: () => playSound(400, 0.1, 'sine', 0.1, 600),
-                combo: (n) => { let f = 400 + n * 30;
-                    playSound(f, 0.15, 'sine', 0.12, f * 1.5); },
+                combo: (n) => { let f = 400 + n * 30; playSound(f, 0.15, 'sine', 0.12, f * 1.5); },
                 bounce: () => playSound(300, 0.2, 'triangle', 0.15, 800),
                 fail: () => playSound(150, 0.4, 'sawtooth', 0.1, 50),
-                win: () => { playSound(600, 0.1, 'sine', 0.15, 1000);
-                    setTimeout(() => playSound(800, 0.2, 'sine', 0.15, 1200), 150); }
+                win: () => { playSound(600, 0.1, 'sine', 0.15, 1000); setTimeout(() => playSound(800, 0.2, 'sine', 0.15, 1200), 150); }
             };
+
+            // 连击音乐控制：开始播放（从头且循环）
+            function startMusic() {
+                if (!musicBuffer || !audioCtx) return;
+
+                // 先停止旧源
+                if (currentMusicSource) {
+                    try { currentMusicSource.stop(); } catch (e) {}
+                    currentMusicSource.disconnect();
+                    currentMusicSource = null;
+                }
+
+                // 创建新源，设置为循环
+                const source = audioCtx.createBufferSource();
+                source.buffer = musicBuffer;
+                source.loop = true;
+                source.connect(audioCtx.destination);
+
+                source.onended = () => {
+                    // 如果是因为 stop() 而结束，会自动触发 onended，但要区分是否 loop 暂停
+                    // 当 loop 时，onended 在源被 stop 后触发（或者自然结束时）
+                    // 这里无需额外处理
+                };
+
+                source.start(0);
+                currentMusicSource = source;
+            }
+
+            // 停止连击音乐
+            function stopMusic() {
+                if (currentMusicSource) {
+                    try { currentMusicSource.stop(); } catch (e) {}
+                    currentMusicSource.disconnect();
+                    currentMusicSource = null;
+                }
+            }
 
             // ==================== 游戏对象 ====================
             const PLATFORM_TYPE = { NORMAL: 0, MOVING: 1, BOUNCE: 2, CRUMBLE: 3 };
@@ -197,6 +309,8 @@
                     if (this.x > W - this.radius) this.x = W - this.radius;
 
                     if (this.vy > 0) {
+                        const prevCombo = comboCount;
+
                         platforms.forEach(p => {
                             if (!p.broken && this.y + this.radius > p.y && this.y < p.y + p.h &&
                                 this.x + this.radius > p.x && this.x - this.radius < p.x + p.w) {
@@ -205,21 +319,29 @@
                                     comboCount++;
                                     maxComboReached = Math.max(maxComboReached, comboCount);
                                     this.lastPlatformId = p.id;
+
                                     comboCount > 1 ? sfx.combo(comboCount) : sfx.jump();
 
-                                    // 检查胜利条件
+                                    // 连击开始时启动音乐
+                                    if (comboCount === 1 && prevCombo === 0) {
+                                        startMusic();
+                                    }
+
                                     if (gameState === 'PLAYING') {
                                         const level = levels[currentLevel];
                                         if (level.type === 'combo' && comboCount >= level.target) {
                                             gameState = 'WIN';
                                             sfx.win();
-                                        } else if (level.type === 'distance' && score >= level.target && maxComboReached >=
-                                            30) {
+                                            stopMusic();
+                                        } else if (level.type === 'distance' && score >= level.target && maxComboReached >= 30) {
                                             gameState = 'WIN';
                                             sfx.win();
+                                            stopMusic();
                                         }
                                     }
                                 } else {
+                                    // 连击中断
+                                    if (comboCount > 0) stopMusic();
                                     comboCount = 0;
                                     this.lastPlatformId = p.id;
                                     sfx.jump();
@@ -266,9 +388,8 @@
                 update(dt) {
                     if (this.type === PLATFORM_TYPE.MOVING) {
                         this.x += this.moveDir * platformSpeed * scale * dt;
-                        if (this.x <= 0) { this.x = 0;
-                            this.moveDir = 1; } else if (this.x + this.w >= W) { this.x = W - this.w;
-                            this.moveDir = -1; }
+                        if (this.x <= 0) { this.x = 0; this.moveDir = 1; }
+                        else if (this.x + this.w >= W) { this.x = W - this.w; this.moveDir = -1; }
                     }
                 }
                 draw() {
@@ -330,33 +451,38 @@
             function handleSceneClick(pos) {
                 if (scene === 'start') {
                     const startBtn = startButton();
-                    if (pos.x >= startBtn.x && pos.x <= startBtn.x + startBtn.w && pos.y >= startBtn.y && pos.y <=
-                        startBtn.y + startBtn.h) {
+                    if (pos.x >= startBtn.x && pos.x <= startBtn.x + startBtn.w && pos.y >= startBtn.y && pos.y <= startBtn.y + startBtn.h) {
                         scene = 'levelSelect';
                     }
                     const settingsBtn = settingsButton();
-                    if (pos.x >= settingsBtn.x && pos.x <= settingsBtn.x + settingsBtn.w && pos.y >= settingsBtn.y && pos
-                        .y <= settingsBtn.y + settingsBtn.h) {
+                    if (pos.x >= settingsBtn.x && pos.x <= settingsBtn.x + settingsBtn.w && pos.y >= settingsBtn.y && pos.y <= settingsBtn.y + settingsBtn.h) {
                         scene = 'settings';
                         settingsPanel.classList.add('active');
                         spacingSlider.value = platformSpacingFactor;
                         speedSlider.value = platformSpeed;
                         updateSliderLabels();
                     }
+                    const importBtn = importMusicButton();
+                    if (pos.x >= importBtn.x && pos.x <= importBtn.x + importBtn.w && pos.y >= importBtn.y && pos.y <= importBtn.y + importBtn.h) {
+                        importMusic();
+                    }
                 } else if (scene === 'levelSelect') {
                     levelButtons().forEach((btn, idx) => {
-                        if (levels[idx].unlocked && pos.x >= btn.x && pos.x <= btn.x + btn.w && pos.y >= btn.y &&
-                            pos.y <= btn.y + btn.h) {
+                        if (levels[idx].unlocked && pos.x >= btn.x && pos.x <= btn.x + btn.w && pos.y >= btn.y && pos.y <= btn.y + btn.h) {
                             currentLevel = idx;
+                            stopMusic();
                             startGame();
                         }
                     });
                     const back = backButton();
-                    if (pos.x >= back.x && pos.x <= back.x + back.w && pos.y >= back.y && pos.y <= back.y + back.h)
+                    if (pos.x >= back.x && pos.x <= back.x + back.w && pos.y >= back.y && pos.y <= back.y + back.h) {
                         scene = 'start';
+                        stopMusic();
+                    }
                 } else if (scene === 'game') {
                     if (gameState === 'OVER') restart();
                     else if (gameState === 'WIN') {
+                        stopMusic();
                         scene = 'levelSelect';
                         gameState = 'PLAYING';
                         comboCount = 0;
@@ -365,30 +491,30 @@
             }
 
             function startButton() {
-                const btnW = 180 * scale,
-                    btnH = 50 * scale;
+                const btnW = 180 * scale, btnH = 50 * scale;
                 return { x: W / 2 - btnW / 2, y: H * 0.60, w: btnW, h: btnH };
             }
 
             function settingsButton() {
-                const btnW = 180 * scale,
-                    btnH = 40 * scale;
+                const btnW = 180 * scale, btnH = 40 * scale;
                 return { x: W / 2 - btnW / 2, y: H * 0.68, w: btnW, h: btnH };
             }
 
+            function importMusicButton() {
+                const btnW = 180 * scale, btnH = 40 * scale;
+                return { x: W / 2 - btnW / 2, y: H * 0.76, w: btnW, h: btnH };
+            }
+
             function backButton() {
-                const btnW = 100 * scale,
-                    btnH = 40 * scale;
+                const btnW = 100 * scale, btnH = 40 * scale;
                 return { x: 20 * scale, y: 20 * scale, w: btnW, h: btnH };
             }
 
             function levelButtons() {
                 const btns = [];
-                const startY = H * 0.4,
-                    gap = 70 * scale;
+                const startY = H * 0.4, gap = 70 * scale;
                 for (let i = 0; i < levels.length; i++) {
-                    const btnW = 220 * scale,
-                        btnH = 50 * scale;
+                    const btnW = 220 * scale, btnH = 50 * scale;
                     btns.push({ x: W / 2 - btnW / 2, y: startY + i * gap, w: btnW, h: btnH });
                 }
                 return btns;
@@ -401,17 +527,17 @@
                 comboCount = 0;
                 maxComboReached = 0;
                 platformIdCounter = 0;
+                stopMusic();
                 player = new Player();
                 platforms = [];
                 const startY = player.y + player.radius;
                 const spacing = getPlatformSpacing();
 
-                // 根据关卡生成不同数量的平台
-                if (currentLevel === 2) { // 第三关：仅3个平台（一个静止，两个移动）
-                    platforms.push(new Platform(startY, PLATFORM_TYPE.NORMAL, true)); // 起始大平台，静止
+                if (currentLevel === 2) {
+                    platforms.push(new Platform(startY, PLATFORM_TYPE.NORMAL, true));
                     platforms.push(new Platform(startY - spacing, PLATFORM_TYPE.MOVING));
                     platforms.push(new Platform(startY - 2 * spacing, PLATFORM_TYPE.MOVING));
-                } else { // 其他关卡：生成12个平台（1个起始+11个移动）
+                } else {
                     platforms.push(new Platform(startY, PLATFORM_TYPE.NORMAL, true));
                     for (let i = 1; i < 12; i++) {
                         platforms.push(new Platform(startY - i * spacing, PLATFORM_TYPE.MOVING));
@@ -423,13 +549,17 @@
                 settingsPanel.classList.remove('active');
             }
 
-            function restart() { startGame(); }
+            function restart() {
+                stopMusic();
+                startGame();
+            }
 
             function gameOver() {
                 if (gameState !== 'PLAYING') return;
                 gameState = 'OVER';
                 bestScore = Math.max(score, bestScore);
                 comboCount = 0;
+                stopMusic();
                 sfx.fail();
             }
 
@@ -461,8 +591,8 @@
                 ctx.font = `${13*scale}px "PingFang SC", Arial`;
                 ctx.fillText(`间距:${platformSpacingFactor.toFixed(2)} | 速度:${platformSpeed}`, W / 2, H * 0.48);
                 drawRoundedButton(startButton().x, startButton().y, startButton().w, startButton().h, '开始游戏', '#ff9800');
-                drawRoundedButton(settingsButton().x, settingsButton().y, settingsButton().w, settingsButton().h, '⚙️ 控制台',
-                    '#555');
+                drawRoundedButton(settingsButton().x, settingsButton().y, settingsButton().w, settingsButton().h, '⚙️ 控制台', '#555');
+                drawRoundedButton(importMusicButton().x, importMusicButton().y, importMusicButton().w, importMusicButton().h, '🎵 导入音乐', '#4caf50');
             }
 
             function drawLevelSelectScene() {
@@ -546,18 +676,16 @@
                         if (player.y < camY + H / 2) camY = player.y - H / 2;
                         score = Math.max(score, Math.floor(-player.y / 10 + 70));
                         platforms.forEach(p => p.update(dt));
-                        // 第三关只有3个平台，不再动态生成新平台
                         if (currentLevel !== 2 && platforms.length > 0 && platforms[platforms.length - 1].y > camY - 100 * scale) {
                             const lastY = platforms[platforms.length - 1].y;
                             platforms.push(new Platform(lastY - getPlatformSpacing(), PLATFORM_TYPE.MOVING));
                         }
                         platforms = platforms.filter(p => p.y < camY + H + 100 * scale);
 
-                        // 第二关距离+连击胜利检测
-                        if (levels[currentLevel].type === 'distance' && score >= 2000 && maxComboReached >= 30 && gameState ===
-                            'PLAYING') {
+                        if (levels[currentLevel].type === 'distance' && score >= 2000 && maxComboReached >= 30 && gameState === 'PLAYING') {
                             gameState = 'WIN';
                             sfx.win();
+                            stopMusic();
                         }
                     }
                     drawGameScene();
