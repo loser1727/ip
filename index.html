@@ -119,19 +119,20 @@
                 }
             }
 
-            // ==================== 音频（带降级的健壮加载） ====================
+            // ==================== 音频（带降级 + 游戏结束音效） ====================
             let audioCtx = null;
-            let musicBuffer = null;           // Web Audio 解码后的缓冲（最优）
-            let musicAudioEl = null;         // 降级用的 Audio 元素（当解码失败时）
-            let currentMusicSource = null;   // 当前正在播放的 BufferSourceNode
+            let musicBuffer = null;           // 连击音乐 (1.mp3)
+            let musicAudioEl = null;         // 降级 <audio>
+            let currentMusicSource = null;   // 当前播放的音乐源
             let musicFileInput = null;       // 隐藏文件选择器
+            let musicLoadStatus = '加载中...';
 
-            // 音乐加载状态，会在主页显示
-            let musicLoadStatus = '加载中...'; // '加载中...' | '✓ 高音质' | '△ 兼容模式' | '✗ 失败'
+            // 掉落音效 (2.mp3)
+            let deathBuffer = null;          // 2.mp3 解码缓冲
+            let deathAudioEl = null;         // 降级 <audio>
 
-            // 页面启动时立即加载默认音乐（不等用户触摸）
+            // 提前加载 1.mp3
             function preloadDefaultMusic() {
-                // 先确保 AudioContext 存在（无需用户手势，创建不启动即可）
                 if (!audioCtx) {
                     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 }
@@ -142,7 +143,6 @@
                         return response.arrayBuffer();
                     })
                     .then(arrayBuffer => {
-                        // 解码为 AudioBuffer
                         return new Promise((resolve, reject) => {
                             audioCtx.decodeAudioData(arrayBuffer,
                                 buffer => resolve(buffer),
@@ -153,11 +153,10 @@
                     .then(buffer => {
                         musicBuffer = buffer;
                         musicLoadStatus = '✓ 高音质';
-                        console.log('默认音乐已解码，可零延迟播放');
+                        console.log('默认音乐 1.mp3 已解码');
                     })
                     .catch(err => {
-                        console.warn('Web Audio 解码失败，尝试降级 Audio 元素：', err);
-                        // 降级：使用传统 Audio 元素
+                        console.warn('1.mp3 解码失败，降级 Audio 元素：', err);
                         musicBuffer = null;
                         if (!musicAudioEl) {
                             musicAudioEl = new Audio('1.mp3');
@@ -165,27 +164,56 @@
                             musicAudioEl.preload = 'auto';
                             musicAudioEl.load();
                             musicLoadStatus = '△ 兼容模式';
-                            // 监听是否真的能播放
                             musicAudioEl.addEventListener('canplaythrough', () => {
                                 musicLoadStatus = '△ 兼容模式（就绪）';
                             }, { once: true });
                             musicAudioEl.addEventListener('error', () => {
                                 musicLoadStatus = '✗ 失败';
-                                console.error('Audio 元素也无法加载 1.mp3，请导入音乐');
+                                console.error('Audio 元素也无法加载 1.mp3');
                             });
                         }
                     });
             }
 
-            // 用户触摸时激活 AudioContext（必须）
+            // 提前加载 2.mp3
+            function preloadDeathAudio() {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                fetch('2.mp3', { cache: 'no-cache' })
+                    .then(response => {
+                        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                        return response.arrayBuffer();
+                    })
+                    .then(arrayBuffer => {
+                        return new Promise((resolve, reject) => {
+                            audioCtx.decodeAudioData(arrayBuffer,
+                                buffer => resolve(buffer),
+                                err => reject(err)
+                            );
+                        });
+                    })
+                    .then(buffer => {
+                        deathBuffer = buffer;
+                        console.log('掉落音效 2.mp3 已解码');
+                    })
+                    .catch(err => {
+                        console.warn('2.mp3 解码失败，降级 Audio 元素：', err);
+                        deathBuffer = null;
+                        if (!deathAudioEl) {
+                            deathAudioEl = new Audio('2.mp3');
+                            deathAudioEl.preload = 'auto';
+                            deathAudioEl.load();
+                        }
+                    });
+            }
+
             function initAudio() {
                 if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-                // 如果之前因为没交互导致 AudioContext 创建失败，这里重建
                 if (!audioCtx) {
                     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                     if (audioCtx.state === 'suspended') audioCtx.resume();
                 }
-                // 如果有 Audio 元素，也尝试预加载并静默播放一下解锁策略
                 if (musicAudioEl && musicAudioEl.paused) {
                     musicAudioEl.play().then(() => {
                         musicAudioEl.pause();
@@ -194,7 +222,6 @@
                 }
             }
 
-            // 允许用户从本地导入音乐文件（会覆盖默认）
             function importMusic() {
                 if (!musicFileInput) {
                     musicFileInput = document.createElement('input');
@@ -206,22 +233,17 @@
                     musicFileInput.addEventListener('change', async (e) => {
                         const file = e.target.files[0];
                         if (!file) return;
-
                         try {
-                            // 停止当前音乐
                             stopMusic();
-
-                            // 尝试 Web Audio 解码
                             const arrayBuffer = await file.arrayBuffer();
                             const buffer = await new Promise((resolve, reject) => {
                                 audioCtx.decodeAudioData(arrayBuffer, resolve, reject);
                             });
                             musicBuffer = buffer;
-                            musicAudioEl = null; // 清除降级元素
+                            musicAudioEl = null;
                             musicLoadStatus = '✓ 高音质（已导入）';
                             console.log('导入音乐解码成功');
                         } catch (err) {
-                            // 降级：用 Blob URL 给 Audio 元素
                             console.warn('导入文件解码失败，使用 Audio 元素回退', err);
                             const url = URL.createObjectURL(file);
                             if (musicAudioEl) {
@@ -238,7 +260,7 @@
                 musicFileInput.click();
             }
 
-            // 音效函数
+            // 音效函数（合成）
             function playSound(f, d, t = 'sine', v = 0.1, g = 0) {
                 if (!audioCtx) return;
                 const o = audioCtx.createOscillator(),
@@ -261,9 +283,26 @@
                 win: () => { playSound(600, 0.1, 'sine', 0.15, 1000); setTimeout(() => playSound(800, 0.2, 'sine', 0.15, 1200), 150); }
             };
 
-            // 连击音乐播放（优先 Web Audio，否则 Audio 元素）
+            // 播放掉落音效 2.mp3（一次性）
+            function playDeathSound() {
+                // 优先 Web Audio
+                if (deathBuffer && audioCtx) {
+                    const source = audioCtx.createBufferSource();
+                    source.buffer = deathBuffer;
+                    source.connect(audioCtx.destination);
+                    source.start(0);
+                    // 一次性，不用储存引用
+                    return;
+                }
+                // 降级 Audio
+                if (deathAudioEl) {
+                    deathAudioEl.currentTime = 0;
+                    deathAudioEl.play().catch(e => console.warn('2.mp3 播放失败:', e));
+                }
+            }
+
+            // 连击音乐控制（1.mp3）
             function startMusic() {
-                // 优先用 Web Audio 零延迟
                 if (musicBuffer && audioCtx) {
                     if (currentMusicSource) {
                         try { currentMusicSource.stop(); } catch (e) {}
@@ -278,22 +317,18 @@
                     currentMusicSource = source;
                     return;
                 }
-
-                // 降级：使用 Audio 元素
                 if (musicAudioEl) {
                     musicAudioEl.currentTime = 0;
-                    musicAudioEl.play().catch(e => console.log('Audio 元素播放失败:', e));
+                    musicAudioEl.play().catch(e => console.log('1.mp3 Audio 播放失败:', e));
                 }
             }
 
             function stopMusic() {
-                // 停 Web Audio 源
                 if (currentMusicSource) {
                     try { currentMusicSource.stop(); } catch (e) {}
                     currentMusicSource.disconnect();
                     currentMusicSource = null;
                 }
-                // 停 Audio 元素
                 if (musicAudioEl) {
                     musicAudioEl.pause();
                     musicAudioEl.currentTime = 0;
@@ -345,7 +380,6 @@
 
                     if (this.vy > 0) {
                         const prevCombo = comboCount;
-
                         platforms.forEach(p => {
                             if (!p.broken && this.y + this.radius > p.y && this.y < p.y + p.h &&
                                 this.x + this.radius > p.x && this.x - this.radius < p.x + p.w) {
@@ -354,10 +388,8 @@
                                     comboCount++;
                                     maxComboReached = Math.max(maxComboReached, comboCount);
                                     this.lastPlatformId = p.id;
-
                                     comboCount > 1 ? sfx.combo(comboCount) : sfx.jump();
 
-                                    // 连击开始时启动音乐
                                     if (comboCount === 1 && prevCombo === 0) {
                                         startMusic();
                                     }
@@ -375,7 +407,6 @@
                                         }
                                     }
                                 } else {
-                                    // 连击中断
                                     if (comboCount > 0) stopMusic();
                                     comboCount = 0;
                                     this.lastPlatformId = p.id;
@@ -595,7 +626,8 @@
                 bestScore = Math.max(score, bestScore);
                 comboCount = 0;
                 stopMusic();
-                sfx.fail();
+                sfx.fail();            // 合成音效
+                playDeathSound();      // 播放 2.mp3 掉落音乐
             }
 
             function drawRoundedButton(x, y, w, h, text, color, textColor = '#fff') {
@@ -625,7 +657,6 @@
                 ctx.fillText(`最高记录: ${bestScore}m`, W / 2, H * 0.4);
                 ctx.font = `${13*scale}px "PingFang SC", Arial`;
                 ctx.fillText(`间距:${platformSpacingFactor.toFixed(2)} | 速度:${platformSpeed}`, W / 2, H * 0.48);
-                // 显示音乐加载状态
                 ctx.font = `${12*scale}px "PingFang SC", Arial`;
                 ctx.fillStyle = '#aaa';
                 ctx.fillText(`音乐: ${musicLoadStatus}`, W / 2, H * 0.54);
@@ -740,13 +771,13 @@
                 requestAnimationFrame(loop);
             }
 
-            // 页面启动
+            // 启动时加载所有默认音频
             window.addEventListener('load', () => {
                 resizeCanvas();
                 scene = 'start';
                 settingsPanel.classList.remove('active');
-                // 立即开始加载默认音乐
                 preloadDefaultMusic();
+                preloadDeathAudio();    // 加载 2.mp3
                 requestAnimationFrame(loop);
             });
         })();
