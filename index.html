@@ -119,19 +119,29 @@
                 }
             }
 
-            // ==================== 音频（带降级 + 游戏结束音效） ====================
+            // ==================== 音频系统 ====================
             let audioCtx = null;
-            let musicBuffer = null;           // 连击音乐 (1.mp3)
-            let musicAudioEl = null;         // 降级 <audio>
-            let currentMusicSource = null;   // 当前播放的音乐源
-            let musicFileInput = null;       // 隐藏文件选择器
+            let musicBuffer = null;
+            let musicAudioEl = null;
+            let currentMusicSource = null;
+            let musicFileInput = null;
             let musicLoadStatus = '加载中...';
 
-            // 掉落音效 (2.mp3)
-            let deathBuffer = null;          // 2.mp3 解码缓冲
-            let deathAudioEl = null;         // 降级 <audio>
+            let deathBuffer = null;
+            let deathAudioEl = null;
+            let deathLoadStatus = '加载中...';
 
-            // 提前加载 1.mp3
+            // 新增：音频加载完成标记
+            let musicLoaded = false;
+            let deathLoaded = false;
+            let allAudioReady = false;   // 所有音频加载结束（无论成败）后变为 true
+
+            function checkAllAudioReady() {
+                if (musicLoaded && deathLoaded) {
+                    allAudioReady = true;
+                }
+            }
+
             function preloadDefaultMusic() {
                 if (!audioCtx) {
                     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -153,10 +163,10 @@
                     .then(buffer => {
                         musicBuffer = buffer;
                         musicLoadStatus = '✓ 高音质';
-                        console.log('默认音乐 1.mp3 已解码');
+                        console.log('连击音乐 1.mp3 已解码');
                     })
                     .catch(err => {
-                        console.warn('1.mp3 解码失败，降级 Audio 元素：', err);
+                        console.warn('1.mp3 解码失败，尝试降级 Audio 元素：', err);
                         musicBuffer = null;
                         if (!musicAudioEl) {
                             musicAudioEl = new Audio('1.mp3');
@@ -172,10 +182,13 @@
                                 console.error('Audio 元素也无法加载 1.mp3');
                             });
                         }
+                    })
+                    .finally(() => {
+                        musicLoaded = true;
+                        checkAllAudioReady();
                     });
             }
 
-            // 提前加载 2.mp3
             function preloadDeathAudio() {
                 if (!audioCtx) {
                     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -195,6 +208,7 @@
                     })
                     .then(buffer => {
                         deathBuffer = buffer;
+                        deathLoadStatus = '✓ 高音质';
                         console.log('掉落音效 2.mp3 已解码');
                     })
                     .catch(err => {
@@ -204,7 +218,19 @@
                             deathAudioEl = new Audio('2.mp3');
                             deathAudioEl.preload = 'auto';
                             deathAudioEl.load();
+                            deathLoadStatus = '△ 兼容模式';
+                            deathAudioEl.addEventListener('canplaythrough', () => {
+                                deathLoadStatus = '△ 兼容模式（就绪）';
+                            }, { once: true });
+                            deathAudioEl.addEventListener('error', () => {
+                                deathLoadStatus = '✗ 失败';
+                                console.error('Audio 元素也无法加载 2.mp3');
+                            });
                         }
+                    })
+                    .finally(() => {
+                        deathLoaded = true;
+                        checkAllAudioReady();
                     });
             }
 
@@ -260,7 +286,6 @@
                 musicFileInput.click();
             }
 
-            // 音效函数（合成）
             function playSound(f, d, t = 'sine', v = 0.1, g = 0) {
                 if (!audioCtx) return;
                 const o = audioCtx.createOscillator(),
@@ -283,25 +308,23 @@
                 win: () => { playSound(600, 0.1, 'sine', 0.15, 1000); setTimeout(() => playSound(800, 0.2, 'sine', 0.15, 1200), 150); }
             };
 
-            // 播放掉落音效 2.mp3（一次性）
             function playDeathSound() {
-                // 优先 Web Audio
                 if (deathBuffer && audioCtx) {
                     const source = audioCtx.createBufferSource();
                     source.buffer = deathBuffer;
                     source.connect(audioCtx.destination);
                     source.start(0);
-                    // 一次性，不用储存引用
                     return;
                 }
-                // 降级 Audio
                 if (deathAudioEl) {
                     deathAudioEl.currentTime = 0;
-                    deathAudioEl.play().catch(e => console.warn('2.mp3 播放失败:', e));
+                    deathAudioEl.play().catch(e => console.warn('降级 Audio 2.mp3 播放失败:', e));
+                    return;
                 }
+                const tempAudio = new Audio('2.mp3');
+                tempAudio.play().catch(e => console.warn('临时 Audio 2.mp3 也失败:', e));
             }
 
-            // 连击音乐控制（1.mp3）
             function startMusic() {
                 if (musicBuffer && audioCtx) {
                     if (currentMusicSource) {
@@ -517,11 +540,15 @@
             function handleSceneClick(pos) {
                 if (scene === 'start') {
                     const startBtn = startButton();
-                    if (pos.x >= startBtn.x && pos.x <= startBtn.x + startBtn.w && pos.y >= startBtn.y && pos.y <= startBtn.y + startBtn.h) {
+                    // 仅当音频全部加载完成时，才能进入关卡选择
+                    if (allAudioReady &&
+                        pos.x >= startBtn.x && pos.x <= startBtn.x + startBtn.w &&
+                        pos.y >= startBtn.y && pos.y <= startBtn.y + startBtn.h) {
                         scene = 'levelSelect';
                     }
                     const settingsBtn = settingsButton();
-                    if (pos.x >= settingsBtn.x && pos.x <= settingsBtn.x + settingsBtn.w && pos.y >= settingsBtn.y && pos.y <= settingsBtn.y + settingsBtn.h) {
+                    if (pos.x >= settingsBtn.x && pos.x <= settingsBtn.x + settingsBtn.w &&
+                        pos.y >= settingsBtn.y && pos.y <= settingsBtn.y + settingsBtn.h) {
                         scene = 'settings';
                         settingsPanel.classList.add('active');
                         spacingSlider.value = platformSpacingFactor;
@@ -529,19 +556,22 @@
                         updateSliderLabels();
                     }
                     const importBtn = importMusicButton();
-                    if (pos.x >= importBtn.x && pos.x <= importBtn.x + importBtn.w && pos.y >= importBtn.y && pos.y <= importBtn.y + importBtn.h) {
+                    if (pos.x >= importBtn.x && pos.x <= importBtn.x + importBtn.w &&
+                        pos.y >= importBtn.y && pos.y <= importBtn.y + importBtn.h) {
                         importMusic();
                     }
                 } else if (scene === 'levelSelect') {
                     levelButtons().forEach((btn, idx) => {
-                        if (levels[idx].unlocked && pos.x >= btn.x && pos.x <= btn.x + btn.w && pos.y >= btn.y && pos.y <= btn.y + btn.h) {
+                        if (levels[idx].unlocked && pos.x >= btn.x && pos.x <= btn.x + btn.w &&
+                            pos.y >= btn.y && pos.y <= btn.y + btn.h) {
                             currentLevel = idx;
                             stopMusic();
                             startGame();
                         }
                     });
                     const back = backButton();
-                    if (pos.x >= back.x && pos.x <= back.x + back.w && pos.y >= back.y && pos.y <= back.y + back.h) {
+                    if (pos.x >= back.x && pos.x <= back.x + back.w &&
+                        pos.y >= back.y && pos.y <= back.y + back.h) {
                         scene = 'start';
                         stopMusic();
                     }
@@ -626,8 +656,8 @@
                 bestScore = Math.max(score, bestScore);
                 comboCount = 0;
                 stopMusic();
-                sfx.fail();            // 合成音效
-                playDeathSound();      // 播放 2.mp3 掉落音乐
+                sfx.fail();
+                playDeathSound();
             }
 
             function drawRoundedButton(x, y, w, h, text, color, textColor = '#fff') {
@@ -657,10 +687,20 @@
                 ctx.fillText(`最高记录: ${bestScore}m`, W / 2, H * 0.4);
                 ctx.font = `${13*scale}px "PingFang SC", Arial`;
                 ctx.fillText(`间距:${platformSpacingFactor.toFixed(2)} | 速度:${platformSpeed}`, W / 2, H * 0.48);
+
                 ctx.font = `${12*scale}px "PingFang SC", Arial`;
                 ctx.fillStyle = '#aaa';
-                ctx.fillText(`音乐: ${musicLoadStatus}`, W / 2, H * 0.54);
-                drawRoundedButton(startButton().x, startButton().y, startButton().w, startButton().h, '开始游戏', '#ff9800');
+                ctx.fillText(`🎵 连击音乐: ${musicLoadStatus}`, W / 2, H * 0.52);
+                ctx.fillText(`💀 掉落音效: ${deathLoadStatus}`, W / 2, H * 0.55);
+
+                // 根据加载状态绘制开始按钮
+                const startBtn = startButton();
+                if (allAudioReady) {
+                    drawRoundedButton(startBtn.x, startBtn.y, startBtn.w, startBtn.h, '开始游戏', '#ff9800');
+                } else {
+                    drawRoundedButton(startBtn.x, startBtn.y, startBtn.w, startBtn.h, '加载中...', '#555');
+                }
+
                 drawRoundedButton(settingsButton().x, settingsButton().y, settingsButton().w, settingsButton().h, '⚙️ 控制台', '#555');
                 drawRoundedButton(importMusicButton().x, importMusicButton().y, importMusicButton().w, importMusicButton().h, '🎵 导入音乐', '#4caf50');
             }
@@ -771,13 +811,12 @@
                 requestAnimationFrame(loop);
             }
 
-            // 启动时加载所有默认音频
             window.addEventListener('load', () => {
                 resizeCanvas();
                 scene = 'start';
                 settingsPanel.classList.remove('active');
                 preloadDefaultMusic();
-                preloadDeathAudio();    // 加载 2.mp3
+                preloadDeathAudio();
                 requestAnimationFrame(loop);
             });
         })();
